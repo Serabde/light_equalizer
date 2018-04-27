@@ -29,8 +29,7 @@ This paragraph must be included in any redistribution.
 #define NOISE     100  // Noise/hum/interference in mic signal
 #define SAMPLES   60  // Length of buffer for dynamic level adjustment
 #define TOP       (N_PIXELS +1) // Allow dot to go slightly off scale
-// Comment out the next line if you do not want brightness control or have a Gemma
-//#define POT_PIN    3  // if defined, a potentiometer is on GPIO #3 (A3, Trinket only)
+
 
 byte
 peak      = 0,      // Used for falling dot
@@ -44,11 +43,15 @@ vol[SAMPLES],       // Collection of prior volume samples
     maxLvlAvg = 512;
 
 unsigned long lastTrig = 0;
+unsigned long lastFade = 0;
+int fadeLevel = 0;
+int saverStage = 0;
+boolean FADE_UP = true;
+const int SCREEN_SAVER = 5000;
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(N_PIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 void setup() {
-  //memset(vol, 0, sizeof(vol));
   memset(vol, 0, sizeof(int)*SAMPLES); //Thanks Neil!
   strip.begin();
   strip.setBrightness(255);
@@ -83,20 +86,44 @@ void loop() {
   else if (height > TOP) height = TOP;
   if (height > peak)     peak   = height; // Keep 'peak' dot at top
 
-  // if POT_PIN is defined, we have a potentiometer on GPIO #3 on a Trinket
-  //    (Gemma doesn't have this pin)
-  uint8_t bright = 255;
-  strip.setBrightness(bright);    // Set LED brightness (if POT_PIN at top
-  //  define commented out, will be full)
-  // Color pixels based on rainbow gradient
-  for (i = 0; i < N_PIXELS; i++) {
-    if (i >= height)
-      strip.setPixelColor(i,   0,   0, 0);
-    else
-      strip.setPixelColor(i, Wheel(map(i, 0, strip.numPixels() - 1, 30, 150)));
+  if (height > 0L) {
+    lastTrig = millis(); // If we were triggered, reset the last trigger
+    FADE_UP = true;
+    lastFade = 0;
+    fadeLevel = 0;
   }
 
-  strip.show(); // Update strip
+  if (millis() - lastTrig > SCREEN_SAVER) {
+    if (millis() - lastFade > 10) {
+      lastFade = millis();
+      if (FADE_UP) {
+        if (fadeLevel >= 255) {
+          fadeLevel = 255;
+          FADE_UP = false;
+        } else {
+          fadeLevel++;
+        }
+      } else if (!FADE_UP) {
+        if (fadeLevel <= 0) {
+          fadeLevel = 0;
+          FADE_UP = true;
+          saverStage++;
+        } else {
+          fadeLevel--;
+        }
+      }
+      setToFade(saverStage % 3, fadeLevel);
+    }
+  } else {
+    for (i = 0; i < N_PIXELS; i++) {
+      if (i >= height)
+        strip.setPixelColor(i, 0, 0, 0);
+      else
+        strip.setPixelColor(i, Wheel(map(i, 0, strip.numPixels() - 1, 30, 150)));
+    }
+
+    strip.show(); // Update strip
+  }
 
   vol[volCount] = n;                      // Save sample for dynamic leveling
   if (++volCount >= SAMPLES) volCount = 0; // Advance/rollover sample counter
@@ -116,6 +143,30 @@ void loop() {
   if ((maxLvl - minLvl) < TOP) maxLvl = minLvl + TOP;
   minLvlAvg = (minLvlAvg * 63 + minLvl) >> 6; // Dampen min/max levels
   maxLvlAvg = (maxLvlAvg * 63 + maxLvl) >> 6; // (fake rolling average)
+}
+
+void setToFade(uint8_t col, uint8_t lvl) {
+  uint8_t red = 0;
+  uint8_t green = 0;
+  uint8_t blue = 0;
+  switch (col) {
+    case 0:
+      red = lvl;
+      break;
+    case 1:
+      green = lvl;
+      break;
+    case 2:
+      blue = lvl;
+      break;
+    default:
+      red = green = blue = 0;
+  }
+
+  for (int i = 0; i < N_PIXELS; i++) {
+    strip.setPixelColor(i, red * lvl / 255, green * lvl / 255, blue * lvl / 255);
+  }
+  strip.show();
 }
 
 // Input a value 0 to 255 to get a color value.
